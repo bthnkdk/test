@@ -1,0 +1,48 @@
+{activeTab === 'incidents' && (
+    <div style={scroolOverflow}>
+        <table style={{ width: '100%', fontSize: 12, borderCollapse: 'separate', borderSpacing: 0 }}>
+            <thead style={{ position: 'sticky', top: 0, backgroundColor: '#fafafa', zIndex: 5 }}>
+                <tr>
+                    {['Time', 'Element', 'Error Type', 'Error Message', 'Job Key', 'State'].map(h => (
+                        <th key={h} style={{
+                            textAlign: 'left', padding: '8px', color: '#888',
+                            fontWeight: 500, borderBottom: '1px solid #e8e8e8',
+                        }}>{h}</th>
+                    ))}
+                </tr>
+            </thead>
+            <tbody>
+                {instanceDetail.incidents && instanceDetail.incidents.length > 0 ? instanceDetail.incidents.map((incident: any, i: number) => {
+                    const isSelected = selectedEvent
+                        && selectedEvent.position === incident.position
+                        && selectedEvent.partitionId === incident.partitionId;
+                    return (
+                        <tr key={`${incident.partitionId}-${incident.position}`}
+                            onClick={() => handleIncidentClick(incident)}
+                            style={{
+                                cursor: 'pointer',
+                                backgroundColor: isSelected ? '#f0ecff' : i % 2 === 0 ? '#fff' : '#fafafa',
+                            }}
+                            onMouseEnter={e => { if (!isSelected) e.currentTarget.style.backgroundColor = '#f5f5f5'; }}
+                            onMouseLeave={e => { if (!isSelected) e.currentTarget.style.backgroundColor = i % 2 === 0 ? '#fff' : '#fafafa'; }}
+                        >
+                            <td style={{ padding: '6px 8px', borderBottom: '1px solid #f0f0f0' }}>{formatDate(incident.timestamp)}</td>
+                            <td style={{ padding: '6px 8px', borderBottom: '1px solid #f0f0f0' }}>{incident.elementId}</td>
+                            <td style={{ padding: '6px 8px', borderBottom: '1px solid #f0f0f0' }}>
+                                <span style={{
+                                    padding: '1px 6px', borderRadius: 4, fontSize: 11,
+                                    backgroundColor: '#fff2f0', color: '#a32d2d',
+                                }}>{incident.errorType}</span>
+                            </td>
+                            <td style={{ padding: '6px 8px', borderBottom: '1px solid #f0f0f0', color: '#ff4d4f' }}>{incident.errorMessage || '-'}</td>
+                            <td style={{ padding: '6px 8px', borderBottom: '1px solid #f0f0f0', color: '#888' }}>{incident.jobKey || '-'}</td>
+                            <td style={{ padding: '6px 8px', borderBottom: '1px solid #f0f0f0' }}>{incident.state}</td>
+                        </tr>
+                    );
+                }) : (
+                    <tr><td colSpan={6} style={{ padding: 24, textAlign: 'center', color: '#888' }}>Incident kaydı yok</td></tr>
+                )}
+            </tbody>
+        </table>
+    </div>
+)}
