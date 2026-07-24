@@ -1,59 +1,43 @@
-[HttpGet("{modelId}/export")]
-public async Task<IActionResult> Export(int modelId)
-{
-    var model = await _modelRepo.GetAsync(modelId);
-    if (model is null) return NotFound();
+const fileInputRef = useRef<HTMLInputElement>(null);
 
-    // current version'ın XML'ini kendi eşleştirmenle al
-    var xml = await GetCurrentVersionXml(model); // senin mantığın
-    if (string.IsNullOrEmpty(xml)) return NotFound("Current versiyon bulunamadı.");
+const handleImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const file = e.target.files?.[0];
+  e.target.value = "";
+  if (!file) return;
 
-    var bundle = new WorkflowBundle
-    {
-        BpmnProcessId = model.BpmnProcessId,
-        Name          = model.Name,
-        BpmnXml       = xml,
-        ExportedFrom  = _env.EnvironmentName,
-        ExportedAt    = DateTime.UtcNow,
-        SchemaVersion = "1.0",
-        Checksum      = Sha256(xml),
-    };
-
-    var json  = JsonSerializer.SerializeToUtf8Bytes(bundle, new JsonSerializerOptions
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase // FE camelCase okusun
-    });
-    var fname = $"{model.BpmnProcessId}.wfbundle.json";
-
-    Response.Headers["Access-Control-Expose-Headers"] = "X-Filename";
-    Response.Headers["X-Filename"] = fname;
-
-    return File(json, "application/json", fname);
-}
-
-private static string Sha256(string input)
-{
-    var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(input));
-    return Convert.ToHexString(bytes);
-}
-
-
-
-async function handleExport() {
   try {
-    const res = await fetch(`/api/workflows/${modelId}/export`);
-    if (!res.ok) throw new Error(await res.text());
+    const text = await file.text();
+    const bundle = JSON.parse(text);
+    const xmlToLoad = bundle.bpmnXml ?? bundle; // düz .bpmn de gelebilir
 
-    const blob = await res.blob();
-    const filename = res.headers.get("X-Filename") || "process.wfbundle.json";
+    const modeler = modelerOrViewerRef.current;
+    if (!modeler) return;
 
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
-  } catch (e) {
-    // toast: "Dışa aktarma başarısız: " + e.message
+    await modeler.importXML(xmlToLoad);
+
+    // isExecutable normalizasyonu (137–150'deki mantığın aynısı)
+    const modeling = modeler.get("modeling") as any;
+    const canvas = modeler.get("canvas") as any;
+    const rootElement = canvas.getRootElement();
+    if (rootElement?.businessObject?.isExecutable === false) {
+      modeling.updateProperties(rootElement, { isExecutable: true });
+    }
+
+    showSnackbarMessage(t("global:import_success"), SNACK_MESSAGE_TYPES.SUCCESS);
+  } catch (err) {
+    showSnackbarMessage("Diagram içe aktarılamadı: geçersiz dosya.", SNACK_MESSAGE_TYPES.ERROR);
   }
-}
+};
+
+
+
+<VKButton className="mr-3" onClick={() => fileInputRef.current?.click()}>
+  {t("Tasarımı İçe Aktar")}
+</VKButton>
+<input
+  ref={fileInputRef}
+  type="file"
+  accept=".json,.bpmn,application/json"
+  style={{ display: "none" }}
+  onChange={handleImportFile}
+/>
