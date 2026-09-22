@@ -1,43 +1,61 @@
-const fileInputRef = useRef<HTMLInputElement>(null);
+// ============================================================
+// Exclude Initiator – akışı başlatan kullanıcı onay veremez (checkbox)
+// ============================================================
 
-const handleImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
-  const file = e.target.files?.[0];
-  e.target.value = "";
-  if (!file) return;
+export function ExcludeInitiatorEntry(props: { element: any; id: string; ctx: EntryContext }) {
+  const { element, id, ctx } = props;
+  const state = readApprovalRoutingState(element);
+  const checked = state.excludeInitiator;
 
-  try {
-    const text = await file.text();
-    const bundle = JSON.parse(text);
-    const xmlToLoad = bundle.bpmnXml ?? bundle; // düz .bpmn de gelebilir
+  const handleChange = useCallback(
+    (e: any) => {
+      const next = setExcludeInitiator(state, !!e?.target?.checked);
+      applyState(ctx, element, next);
+    },
+    [ctx, element, state]
+  );
 
-    const modeler = modelerOrViewerRef.current;
-    if (!modeler) return;
-
-    await modeler.importXML(xmlToLoad);
-
-    // isExecutable normalizasyonu (137–150'deki mantığın aynısı)
-    const modeling = modeler.get("modeling") as any;
-    const canvas = modeler.get("canvas") as any;
-    const rootElement = canvas.getRootElement();
-    if (rootElement?.businessObject?.isExecutable === false) {
-      modeling.updateProperties(rootElement, { isExecutable: true });
-    }
-
-    showSnackbarMessage(t("global:import_success"), SNACK_MESSAGE_TYPES.SUCCESS);
-  } catch (err) {
-    showSnackbarMessage("Diagram içe aktarılamadı: geçersiz dosya.", SNACK_MESSAGE_TYPES.ERROR);
-  }
-};
-
-
-
-<VKButton className="mr-3" onClick={() => fileInputRef.current?.click()}>
-  {t("Tasarımı İçe Aktar")}
-</VKButton>
-<input
-  ref={fileInputRef}
-  type="file"
-  accept=".json,.bpmn,application/json"
-  style={{ display: "none" }}
-  onChange={handleImportFile}
-/>
+  return h(
+    'div',
+    {
+      class: 'bio-properties-panel-entry',
+      'data-entry-id': id,
+      style: {
+        width: '100%',
+        display: 'block',
+        boxSizing: 'border-box',
+        flex: '1 0 100%',
+      },
+    },
+    [
+      h(
+        'div',
+        {
+          style: {
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+          },
+        },
+        [
+          h('input', {
+            id: `bio-properties-panel-${id}-checkbox`,
+            type: 'checkbox',
+            checked,
+            onChange: handleChange,
+            style: { margin: 0, cursor: 'pointer' },
+          }),
+          h(
+            'label',
+            {
+              class: 'bio-properties-panel-label',
+              for: `bio-properties-panel-${id}-checkbox`,
+              style: { cursor: 'pointer', margin: 0 },
+            },
+            'Akışı başlatan kullanıcı onay veremez'
+          ),
+        ]
+      ),
+    ]
+  );
+}
