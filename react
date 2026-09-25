@@ -1,61 +1,180 @@
-// ============================================================
-// Exclude Initiator – akışı başlatan kullanıcı onay veremez (checkbox)
-// ============================================================
+private const int MaxRoutingCacheSize = 1000;
 
-export function ExcludeInitiatorEntry(props: { element: any; id: string; ctx: EntryContext }) {
-  const { element, id, ctx } = props;
-  const state = readApprovalRoutingState(element);
-  const checked = state.excludeInitiator;
+private long _cursor;
 
-  const handleChange = useCallback(
-    (e: any) => {
-      const next = setExcludeInitiator(state, !!e?.target?.checked);
-      applyState(ctx, element, next);
-    },
-    [ctx, element, state]
-  );
+// Deploy edilmiş bir definition hiç değişmez, bu yüzden cache tick'ler arasında güvenle yaşar
+private readonly Dictionary<(long DefinitionKey, string ElementId), ApprovalRouting> _routingCache = new();
 
-  return h(
-    'div',
+private async Task ProjectNewTasksAsync(CancellationToken ct)
+{
+    int inserted = 0;
+
+    while (!ct.IsCancellationRequested)
     {
-      class: 'bio-properties-panel-entry',
-      'data-entry-id': id,
-      style: {
-        width: '100%',
-        display: 'block',
-        boxSizing: 'border-box',
-        flex: '1 0 100%',
-      },
-    },
-    [
-      h(
-        'div',
+        var batch = await _processMessageSubscriptionRepository
+            .GetNewCreatedAfterAsync(_cursor, BatchSize, ct);
+
+        if (batch.Count == 0)
         {
-          style: {
-            display: 'flex',
-            alignItems: 'center',
-            gap: '6px',
-          },
-        },
-        [
-          h('input', {
-            id: `bio-properties-panel-${id}-checkbox`,
-            type: 'checkbox',
-            checked,
-            onChange: handleChange,
-            style: { margin: 0, cursor: 'pointer' },
-          }),
-          h(
-            'label',
+            Logger.LogDebug("WfApprovalTaskProjector: no new CREATED rows after position {Cursor}", _cursor);
+            break;
+        }
+
+        var candidates = batch
+            .Where(p => p.ProcessInstanceKey is not null && p.ElementInstanceKey is not null)
+            .ToList();
+
+        if (candidates.Count > 0)
+        {
+            var tasks = await BuildTasksAsync(candidates, ct);
+            inserted += await SaveAsync(tasks, ct);
+        }
+
+        _cursor = batch[^1].Position;
+        if (batch.Count < BatchSize) break;
+    }
+
+    if (inserted > 0)
+        Logger.LogInformation("WfApprovalTaskProjector: {Inserted} task inserted, cursor={Cursor}", inserted, _cursor);
+}
+
+private async Task<List<WfApprovalTask>> BuildTasksAsync(
+    List<ProcessMessageSubscription> candidates, CancellationToken ct)
+{
+    // 1. Existence: tek sorgu
+    var elementKeys = candidates.Select(p => p.ElementInstanceKey!.Value).ToList();
+    var existing = await _wfApprovalTaskRepository.GetExistingElementInstanceKeysAsync(elementKeys, ct);
+
+    var fresh = candidates
+        .Where(p => !existing.Contains(p.ElementInstanceKey!.Value))
+        .DistinctBy(p => p.ElementInstanceKey!.Value)
+        .ToList();
+
+    if (fresh.Count == 0) return [];
+
+    // 2 + 3. Definition key ve submitter: batch başına birer sorgu
+    var instanceKeys = fresh.Select(p => p.ProcessInstanceKey!.Value).Distinct().ToList();
+    var definitionKeys = await _processInstanceRepository.GetDefinitionKeysAsync(instanceKeys, ct);
+    var submitters = await _variableRepository.GetLatestValuesAsync(instanceKeys, ZeebeConstant.InstanceSubmitterUser, ct);
+
+    var xmlByDefinition = new Dictionary<long, string>();   // tick-local
+    var latestXmlFallback = new Dictionary<string, string>(); // tick-local, latest değişebileceği için kalıcı değil
+
+    var result = new List<WfApprovalTask>(fresh.Count);
+    foreach (var pms in fresh)
+    {
+        var entity = new WfApprovalTask
+        {
+            ProcessInstanceKey = pms.ProcessInstanceKey!.Value,
+            ElementInstanceKey = pms.ElementInstanceKey!.Value,
+            BpmnProcessId = pms.BpmnProcessId,
+            MessageName = pms.MessageName,
+            CorrelationKey = pms.CorrelationKey,
+            Status = ApprovalStatus.Pending,
+            Result = ApprovalResult.None,
+            TenantId = pms.TenantId
+        };
+
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(pms.BpmnProcessId) && !string.IsNullOrWhiteSpace(pms.ElementId))
             {
-              class: 'bio-properties-panel-label',
-              for: `bio-properties-panel-${id}-checkbox`,
-              style: { cursor: 'pointer', margin: 0 },
-            },
-            'Akışı başlatan kullanıcı onay veremez'
-          ),
-        ]
-      ),
-    ]
-  );
+                var routing = await ResolveRoutingAsync(pms, definitionKeys, xmlByDefinition, latestXmlFallback, ct);
+                entity.ApprovalWorkgroupIds = routing.WorkgroupIds;
+                entity.ApprovalRoleIds = routing.RoleIds;
+                entity.ApprovalEmployeeIds = routing.EmployeeIds;
+                entity.ApprovalLogic = routing.Logic;
+                entity.ApprovalScreenId = routing.ScreenId;
+                entity.ApprovalScreenName = routing.ScreenName;
+                entity.ApprovalExcludeInitiator = routing.ExcludeInitiator.ToBool();
+            }
+
+            entity.SubmitterUserId = submitters.TryGetValue(entity.ProcessInstanceKey, out var raw)
+                ? JsonSerializer.Deserialize<string>(raw)
+                : string.Empty;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "WfApprovalTaskProjector: approval routing çözülemedi (Process {ProcessId}, " +
+                "Element {ElementId}); task routing'siz oluşturuldu", pms.BpmnProcessId, pms.ElementId);
+        }
+
+        result.Add(entity);
+    }
+
+    return result;
+}
+
+private async Task<ApprovalRouting> ResolveRoutingAsync(
+    ProcessMessageSubscription pms,
+    Dictionary<long, long> definitionKeys,
+    Dictionary<long, string> xmlByDefinition,
+    Dictionary<string, string> latestXmlFallback,
+    CancellationToken ct)
+{
+    if (definitionKeys.TryGetValue(pms.ProcessInstanceKey!.Value, out var definitionKey))
+    {
+        var cacheKey = (definitionKey, pms.ElementId!);
+        if (_routingCache.TryGetValue(cacheKey, out var cached))
+            return cached;
+
+        if (!xmlByDefinition.TryGetValue(definitionKey, out var xml))
+        {
+            xml = await _bpmnModelVersionRepository.GetXmlByDefinitionKeyAsync(definitionKey, ct);
+            xmlByDefinition[definitionKey] = xml;
+        }
+
+        var routing = ParseApprovalRouting(xml, pms.ElementId);
+
+        if (_routingCache.Count >= MaxRoutingCacheSize)
+            _routingCache.Clear();
+        _routingCache[cacheKey] = routing;
+
+        return routing;
+    }
+
+    // Process instance kaydı henüz export edilmemiş olabilir: eski davranışa düş
+    Logger.LogWarning("WfApprovalTaskProjector: definition key bulunamadı (Instance {InstanceKey}), latest XML kullanılıyor",
+        pms.ProcessInstanceKey);
+
+    if (!latestXmlFallback.TryGetValue(pms.BpmnProcessId!, out var latestXml))
+    {
+        latestXml = await _bpmnModelVersionRepository.GetLatestXmlByProcessIdAsync(pms.BpmnProcessId!, ct);
+        latestXmlFallback[pms.BpmnProcessId!] = latestXml;
+    }
+
+    return ParseApprovalRouting(latestXml, pms.ElementId);
+}
+
+// 5. Önce toplu kayıt dene, hata olursa satır satır kaydet ve hatalı satırı atla
+private async Task<int> SaveAsync(List<WfApprovalTask> tasks, CancellationToken ct)
+{
+    if (tasks.Count == 0) return 0;
+
+    try
+    {
+        await _wfApprovalTaskRepository.InsertRangeSaveChangesAsync(tasks, ct);
+        return tasks.Count;
+    }
+    catch (Exception ex) when (ex is not OperationCanceledException)
+    {
+        Logger.LogWarning(ex, "WfApprovalTaskProjector: batch insert başarısız, satır satır deneniyor");
+        _wfApprovalTaskRepository.ClearChangeTracker(); // KRİTİK, aşağıdaki nota bak
+
+        int ok = 0;
+        foreach (var task in tasks)
+        {
+            try
+            {
+                await _wfApprovalTaskRepository.InsertSaveChangesAsync(task, ct);
+                ok++;
+            }
+            catch (Exception rowEx) when (rowEx is not OperationCanceledException)
+            {
+                _wfApprovalTaskRepository.ClearChangeTracker();
+                Logger.LogError(rowEx, "WfApprovalTaskProjector: task atlandı (ElementInstanceKey {Key})", task.ElementInstanceKey);
+            }
+        }
+        return ok;
+    }
 }
