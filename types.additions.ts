@@ -1,4 +1,5 @@
 // ---- types.ts'in sonuna eklenecekler ----
+// Not: types.ts zaten React.CSSProperties kullandığı için React.ReactNode ek import gerektirmez.
 
 export const DIAGRAM_HEIGHT = 400;
 
@@ -27,4 +28,13 @@ export interface SelectableEvent {
   key?: number;
   position: number;
   partitionId?: number;
+}
+
+// DataTable kolon tanımı
+export interface Column<T> {
+  key: string;
+  header: string;
+  width?: number | string;
+  className?: string;
+  render: (row: T) => React.ReactNode;
 }
