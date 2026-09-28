@@ -11,18 +11,18 @@ import {
   VariableTimelineEvent,
   ProcessInstanceDetail,
   SelectableEvent,
+  Column,
+  Tone,
   BPMNMonitorProps,
   STATE_COLORS,
   INTENT_STYLES,
   INSTANCE_STATE_STYLES,
   VARIABLE_INTENT_TONE,
   DANGER_TONE,
+  NEUTRAL_TONE,
   DIAGRAM_HEIGHT,
   SNACK_MESSAGE_TYPES,
 } from './types.ts';
-import { DataTable } from './components/DataTable.tsx';
-import type { Column } from './components/DataTable.tsx';
-import { Badge } from './components/Badge.tsx';
 import styles from './BPMNProcessHistory.module.css';
 
 import BpmnViewer from 'bpmn-js/lib/NavigatedViewer';
@@ -53,6 +53,91 @@ const eventRowKey = (row: SelectableEvent, index: number) =>
   `${row.partitionId ?? '-'}-${row.position}-${index}`;
 
 const cx = (...classes: (string | false | undefined)[]) => classes.filter(Boolean).join(' ');
+
+const Badge = ({
+  label,
+  tone = NEUTRAL_TONE,
+  size = 'sm',
+}: {
+  label: ReactNode;
+  tone?: Tone;
+  size?: 'sm' | 'md';
+}) => (
+  <span
+    className={styles.badge}
+    style={{
+      padding: size === 'md' ? '2px 10px' : '1px 7px',
+      fontSize: size === 'md' ? 12 : 11,
+      backgroundColor: tone.bg,
+      color: tone.color,
+    }}
+  >
+    {label}
+  </span>
+);
+
+function DataTable<T>({
+  columns,
+  rows,
+  rowKey,
+  onRowClick,
+  isSelected,
+  emptyText,
+}: {
+  columns: Column<T>[];
+  rows: T[] | null | undefined;
+  rowKey: (row: T, index: number) => string;
+  onRowClick?: (row: T) => void;
+  isSelected?: (row: T) => boolean;
+  emptyText: string;
+}) {
+  const data = rows ?? [];
+
+  return (
+    <div className={styles.tableScroll}>
+      <table className={styles.table}>
+        <thead>
+          <tr>
+            {columns.map((column) => (
+              <th
+                key={column.key}
+                style={column.width !== undefined ? { width: column.width } : undefined}
+              >
+                {column.header}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {data.length === 0 ? (
+            <tr>
+              <td colSpan={columns.length} className={styles.empty}>
+                {emptyText}
+              </td>
+            </tr>
+          ) : (
+            data.map((row, index) => (
+              <tr
+                key={rowKey(row, index)}
+                className={
+                  cx(onRowClick && styles.clickable, isSelected?.(row) && styles.selected) ||
+                  undefined
+                }
+                onClick={onRowClick ? () => onRowClick(row) : undefined}
+              >
+                {columns.map((column) => (
+                  <td key={column.key} className={column.className}>
+                    {column.render(row)}
+                  </td>
+                ))}
+              </tr>
+            ))
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
 
 const Field = ({
   label,
