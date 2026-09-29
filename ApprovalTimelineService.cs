@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
 using System.Xml;
-using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 
 namespace VK.Emar.Services.Workflow.Api
@@ -34,18 +33,13 @@ namespace VK.Emar.Services.Workflow.Api
         private static readonly HashSet<string> ActiveStates =
             new(StringComparer.OrdinalIgnoreCase) { "Active", "Activating", "Completing", "Incident" };
 
-        private static readonly TimeSpan GraphCacheSlidingExpiration = TimeSpan.FromHours(12);
-
-        private readonly IMemoryCache _cache;
         private readonly IApproverNameResolver _nameResolver;
         private readonly ILogger<ApprovalTimelineService> _logger;
 
         public ApprovalTimelineService(
-            IMemoryCache cache,
             IApproverNameResolver nameResolver,
             ILogger<ApprovalTimelineService> logger)
         {
-            _cache = cache;
             _nameResolver = nameResolver;
             _logger = logger;
         }
@@ -110,18 +104,11 @@ namespace VK.Emar.Services.Workflow.Api
         {
             if (string.IsNullOrWhiteSpace(xmlContent)) return null;
 
-            var cacheKey = $"approval-bpmn-graph:{processDefinitionKey}";
-            if (_cache.TryGetValue(cacheKey, out BpmnProcessGraph cached)) return cached;
-
+            // Her istekte parse ediliyor: birkaç ms sürer, isteğin DB sorgularının yanında ihmal edilebilir.
+            // Ölçümde yavaşlık görülürse burada processDefinitionKey bazında cache'lenebilir (XML versiyon başına sabit).
             try
             {
-                var graph = BpmnProcessGraph.Parse(xmlContent, bpmnProcessId, _logger);
-                _cache.Set(cacheKey, graph, new MemoryCacheEntryOptions
-                {
-                    SlidingExpiration = GraphCacheSlidingExpiration,
-                    Size = 1, // cache'te SizeLimit tanımlıysa zorunlu, değilse yok sayılır
-                });
-                return graph;
+                return BpmnProcessGraph.Parse(xmlContent, bpmnProcessId, _logger);
             }
             catch (XmlException ex)
             {
