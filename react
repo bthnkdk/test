@@ -1,1 +1,8 @@
-.
+<button
+  type="button"
+  className={styles.diagramToggle}
+  onClick={() => setDiagramCollapsed((collapsed) => !collapsed)}
+  aria-expanded={!diagramCollapsed}
+>
+  {diagramCollapsed ? '▾ Diyagramı göster' : '▴ Diyagramı gizle'}
+</button>
