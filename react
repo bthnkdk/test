@@ -1,8 +1,20 @@
-<button
-  type="button"
-  className={styles.diagramToggle}
-  onClick={() => setDiagramCollapsed((collapsed) => !collapsed)}
-  aria-expanded={!diagramCollapsed}
->
-  {diagramCollapsed ? '▾ Diyagramı göster' : '▴ Diyagramı gizle'}
-</button>
+meta={item.groupName}
+extra={
+  <>
+    <div className={styles.approvalMeta}>
+      {rejected ? 'Reddeden' : 'Onaylayan'}: {item.userName} ·{' '}
+      <span className={styles.mono}>{formatApprovalDate(item.timestamp)}</span>
+    </div>
+    {item.reason && (
+      <div
+        className={joinApprovalClasses(
+          styles.approvalReason,
+          rejected && styles.approvalReasonRejected
+        )}
+      >
+        {rejected ? 'Red sebebi: ' : 'Not: '}
+        {item.reason}
+      </div>
+    )}
+  </>
+}
