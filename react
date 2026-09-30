@@ -1,20 +1,23 @@
-meta={item.groupName}
-extra={
-  <>
-    <div className={styles.approvalMeta}>
-      {rejected ? 'Reddeden' : 'Onaylayan'}: {item.userName} ·{' '}
-      <span className={styles.mono}>{formatApprovalDate(item.timestamp)}</span>
-    </div>
-    {item.reason && (
-      <div
-        className={joinApprovalClasses(
-          styles.approvalReason,
-          rejected && styles.approvalReasonRejected
-        )}
-      >
-        {rejected ? 'Red sebebi: ' : 'Not: '}
-        {item.reason}
-      </div>
-    )}
-  </>
-}
+// Backend UTC döner; ekranda Türkiye saati (Europe/Istanbul, sabit +3) gösterilir
+const approvalDateFormatter = new Intl.DateTimeFormat('tr-TR', {
+  timeZone: 'Europe/Istanbul',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  hourCycle: 'h23',
+});
+
+const formatApprovalDate = (date?: string) => {
+  if (!date) return '-';
+  // Saat dilimi bilgisi yoksa UTC kabul et (yoksa tarayıcı yerel saat sanar)
+  const iso = /[zZ]|[+-]\d{2}:?\d{2}$/.test(date) ? date : `${date}Z`;
+  const parsed = new Date(iso);
+  if (Number.isNaN(parsed.getTime())) return '-';
+
+  const parts = Object.fromEntries(
+    approvalDateFormatter.formatToParts(parsed).map((part) => [part.type, part.value])
+  );
+  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}`;
+};
